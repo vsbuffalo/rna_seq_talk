@@ -96,12 +96,12 @@ breaks <- local({
 plot(breaks, y[, 2], log="x", xlab="gene length (log scale)", 
   ylab="Percent DE genes", 
   main=sprintf("Percent DE genes by gene length (bins of equal size)\n Pearson correlation: %.2f", 
-  cor(log10(breaks), y[, 2])))
+  cor(log10(breaks), y[, 2])), pch=19, cex=0.5)
 f <- lm(formula = y[, 2] ~ log10(breaks))
 abline(f, col="blue")
 #+end_src
 
-#+results[6caf21d35bec63262a9e5b4dcfe76df0f5395c2e]:
+#+results[279a0a8f42361aed75d1dc13da3c7716a9e5d37b]:
 : results/length_de.pdf
 
 * Gene Length Bias
@@ -122,13 +122,14 @@ rowVars <- function(x) apply(x, 1, var) # the one in genefilter is not numerical
 
 # 1 is added to log(0) does not lead to NAs
 plot(rowMeans(d.treated)+1, rowVars(d.treated)+1, xlab="genewise means (log scale)", 
-  ylab="genewise variances (log scale)", log="xy")
+  ylab="genewise variances (log scale)", log="xy", pch=19, cex=0.3)
 #+end_src
 
-#+results[7af139e61c5c1978b7f356a940aec98faa85eb29]:
+#+results[e53099045e61298bdc097412cb5b130f915b9161]:
 : results/mean_var.pdf
 
 * The Variance-Mean Relationship (not log scale)
+#+ATTR_LaTeX: width=9cm
 #+begin_src R :file results/mean_var_no_log.pdf :exports results :results export graphics :cache yes 
 plot(rowMeans(d.treated), rowVars(d.treated), xlab="genewise means (log scale)",                                                
   ylab="genewise variances (log scale)")
@@ -168,6 +169,7 @@ $x_1$.
 Note: every scale is log-transformed for comparison to the original
 data!
 
+#+ATTR_LaTeX: width=9cm
 #+begin_src R :file results/vst.pdf :exports results :results export graphics :cache yes  
 vsd <- getVarianceStabilizedData(csd.blind)
 op <- par(no.readonly=TRUE)
@@ -181,14 +183,18 @@ plot(rowMeans(vsd), rowVars(vsd), xlab="genewise means", ylab="genewise variance
 par(op)
 #+end_src
 
-* Gene counts as a proportion of total lane counts
+#+results[0f823894fdbbc806cd5000f8bd64d5d5ecd1300c]:
+: results/vst.pdf
 
+* Gene counts as a proportion of total lane counts
+#+ATTR_LaTeX: width=9cm
 #+begin_src R :file results/gene_dist.pdf :exports results :results export graphics :cache yes 
 plotGeneDistribution(cds, TRUE, TRUE)
 #+end_src
 
+#+results[145442e01786ffdeef1ee6ea7d4106d000840cb0]:
+: results/gene_dist.pdf
+
 * RPKM
 
-$\frac{\text{reads mapped}}{\text{mapped reads (in millions)} \text{gene length (in KB)}}$
-
-
+$\frac{\text{reads mapped}}{\text{mapped reads (in millions)} \cdot \text{gene length (in KB)}}$
