@@ -1,0 +1,194 @@
+#+title: The Nature of RNA-Seq Data
+#+author: Vince Buffalo\\Bioinfomatics Core\\UC Davis Genome Center
+#+email: vsbuffalo@ucdavis.edu
+#+date: February 9, 2012
+#+description:
+#+keywords:
+#+language: en
+#+options: h:3 num:t toc:t \n:nil @:t ::t |:t ^:nil -:t f:t *:t <:t
+#+options: tex:t latex:t skip:nil d:nil todo:t pri:nil tags:not-in-toc
+#+infojs_opt: view:nil toc:nil ltoc:t mouse:underline buttons:0 path:http://orgmode.org/org-info.js
+#+export_select_tags: export
+#+export_exclude_tags: noexport
+#+link_up:   
+#+link_home: 
+#+xslt:
+#+startup: beamer
+#+latex_class: beamer
+#+latex_class_options: [bigger]
+#+babel: :comments yes :session
+
+* The role of the statistician
+The terroir and excellence of a well-grown grape can only be ruined or
+masked by the enologist; a poorly-grown grape can only produce
+mediocre wine despite the best efforts of the enologist.
+
+Likewise, a well-design and well-executed experiment can only be
+ruined or masked by the statistician; a poorly-design or pooly-executed
+experiment can only produce mediocre findings despite the best efforts
+of the statistician.
+
+* What I'll (quickly) discuss
+
+ - What RNA-seq data looks like.
+ - Why we can't treat RNA-seq data like microarray data.
+
+* What factors contribute to better detection of expressed genes?
+
+ - Gene/transcript length: longer are more easily detected.
+ - Sample concentration: higher concentration leads to better
+   detection of low-expressed genes, and better estimate of expression.
+
+** The concentrations of cDNA samples vary. What impact does this have?
+
+ - Increased coverage of all expressed genes ($n$ counts to $cn$ counts).
+ - Increased detection of low-expressed genes ($0$ counts to $n$ counts).
+
+* Library size and detection of low-expressed genes
+
+#+ATTR_LaTeX: width=9cm
+#+begin_src R :file results/lib_size.pdf :exports results :results export graphics :cache yes
+library(pasilla)
+library(DESeq)
+library(RNASeqTools)
+data(pasillaGenes)
+
+cds <- newCountDataSet(counts(pasillaGenes), pData(pasillaGenes)$condition)
+cds <- estimateSizeFactors(cds)
+cds.blind <- estimateDispersions(cds, method="blind")
+d <- counts(cds, normalized=TRUE)
+d.treated <- d[, pData(cds)$condition == "treated"]
+plotLibSizeSensitivity(cds)
+#+end_src
+
+#+results[54868f871968399ca9794dc2c820b9af76c572e3]:
+: results/lib_size.pdf
+
+* Gene Length and Differential Expression
+
+#+ATTR_LaTeX: width=9cm                                                                                                             
+#+begin_src R :file results/length_de.pdf :exports results :results export graphics :cache yes
+library(Hmisc)
+
+if (!file.exists("dmelanogaster_gene_lengths.txt")) {
+  library(biomaRt)
+  mart <- useMart('ensembl')
+  ensembl <- useDataset("dmelanogaster_gene_ensembl", mart)
+
+  bm.results <- getBM(attributes=c("ensembl_gene_id", "start_position", "end_position"), 
+                filters="ensembl_gene_id", values=rownames(d), mart=ensembl)
+  bm.results$length <- abs(bm.results$start_position - bm.results$end_position)
+  write.table(bm.results, "dmelanogaster_gene_ensembl.txt", quote=FALSE, row.names=FALSE, sep="\t")
+} else {
+  bm.results <- read.table("dmelanogaster_gene_ensembl.txt", header=TRUE, sep="\t")
+}
+
+cds <- estimateDispersions(cds)
+res <- nbinomTest(cds, "treated", "untreated")
+res$length <- bm.results$length[match(res$id, bm.results$ensembl_gene_id)]
+
+k = Hmisc::cut2(res$length, m=100)
+y <- aggregate(res$padj, list(length=k), function(x) sum(na.exclude(x) <= 0.1)/sum(na.exclude(x)))
+breaks <- local({
+  tmp <- gsub("\\[\\s*(\\d+),\\s*(\\d+).*", "\\1;;\\2", levels(k))
+  sapply(strsplit(tmp, ";;"), function(x) mean(as.numeric(x)))
+})
+plot(breaks, y[, 2], log="x", xlab="gene length (log scale)", 
+  ylab="Percent DE genes", 
+  main=sprintf("Percent DE genes by gene length (bins of equal size)\n Pearson correlation: %.2f", 
+  cor(log10(breaks), y[, 2])))
+f <- lm(formula = y[, 2] ~ log10(breaks))
+abline(f, col="blue")
+#+end_src
+
+#+results[6caf21d35bec63262a9e5b4dcfe76df0f5395c2e]:
+: results/length_de.pdf
+
+* Gene Length Bias
+
+Oshlack, et al. 2009 talk about this bias extensively.
+
+  - How do we get around this?
+  - Will all findings be confounded by differing power due to gene
+    length?
+  - How can we handle this effect in cross-gene, within-sample
+    comparisons?
+
+* The Variance-Mean Relationship
+
+#+ATTR_LaTeX: width=9cm
+#+begin_src R :file results/mean_var.pdf :exports results :results export graphics :cache yes
+rowVars <- function(x) apply(x, 1, var) # the one in genefilter is not numerically stable
+
+# 1 is added to log(0) does not lead to NAs
+plot(rowMeans(d.treated)+1, rowVars(d.treated)+1, xlab="genewise means (log scale)", 
+  ylab="genewise variances (log scale)", log="xy")
+#+end_src
+
+#+results[7af139e61c5c1978b7f356a940aec98faa85eb29]:
+: results/mean_var.pdf
+
+* The Variance-Mean Relationship (not log scale)
+#+begin_src R :file results/mean_var_no_log.pdf :exports results :results export graphics :cache yes 
+plot(rowMeans(d.treated), rowVars(d.treated), xlab="genewise means (log scale)",                                                
+  ylab="genewise variances (log scale)")
+#+end_src
+
+#+results[9afae63bf386aecc4e39bc7d76187cdd8cb0ab70]:
+: results/mean_var_no_log.pdf
+
+* Why does this matter?
+  
+  - We need to model this explicitly (=DESeq=, =edgeR=, etc).
+  - This variance is /greater/ than the mean (overdipsersion) in
+    almost all cases in which there are biological replicates. This is
+    due to biological heterogeneity in individuals.
+  - Highly expressed genes have high variance; low expressed genes
+    have low variance. Any machine learning methods that use variance
+    or distance (PCA, sparsePCA, the Lasso, distance-based clustering)
+    will be negatively affected by this.  
+
+* Distance-based methods
+
+$d(x, y) = \sqrt{(x_1 - y_1)^2 + (x_2 - y_2)^2 + \ldots + (x_n - y_n)^2}$
+
+Suppose $x$ and $y$ are two /replicates/. If $y_1$ and $x_1$ are the
+expression values for a highly expressed gene, we know that it will
+have high variance, and these values will likely be very different.
+
+If $x_2$ and $y_2$ are the expressed values for a lowly-expressed
+gene, their difference will likely be less than that of $y_1$ and
+$x_1$. 
+
+  - What drives this distance calculation?
+  - Is this desirable?
+
+* Variance Stabilizing Transformations
+
+Note: every scale is log-transformed for comparison to the original
+data!
+
+#+begin_src R :file results/vst.pdf :exports results :results export graphics :cache yes  
+vsd <- getVarianceStabilizedData(csd.blind)
+op <- par(no.readonly=TRUE)
+par(mfrow=c(1, 3))
+plot(rowMeans(d.treated+1), rowVars(d.treated+1), xlab="genewise means", ylab="genewise variances",
+     main="Non-VST normalized data", log="xy", pch=19, cex=0.3)
+plot(rowMeans(log10(d.treated+1)), rowVars(log10(d.treated+1)), xlab="genewise means", ylab="genewise variances",
+     main="log10-transformed normalized data", pch=19, cex=0.3, log='xy')
+plot(rowMeans(vsd), rowVars(vsd), xlab="genewise means", ylab="genewise variances",
+     main="VST normalized data", pch=19, cex=0.3, log='xy')
+par(op)
+#+end_src
+
+* Gene counts as a proportion of total lane counts
+
+#+begin_src R :file results/gene_dist.pdf :exports results :results export graphics :cache yes 
+plotGeneDistribution(cds, TRUE, TRUE)
+#+end_src
+
+* RPKM
+
+$\frac{\text{reads mapped}}{\text{mapped reads (in millions)} \text{gene length (in KB)}}$
+
+
