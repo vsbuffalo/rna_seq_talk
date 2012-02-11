@@ -17,26 +17,28 @@
 #+latex_class: beamer
 #+latex_class_options: [bigger]
 #+babel: :comments yes :session
-#+beamer_frame_level: 1
+#+beamer_frame_level: 2
 
-* What I'll (quickly) discuss
+* Introduction
+** What I'll (quickly) discuss
 
  - What RNA-seq data looks like.
  - Issues with RNA-seq data.
  - Issues with normalizing RNA-seq data.
 
-* What factors contribute to better detection of expressed genes?
+* RNA-Seq Data
+** What factors contribute to better detection of expressed genes?
 
  - Gene/transcript length: longer are more easily detected.
  - Sample concentration: higher concentration leads to better
    detection of lowly-expressed genes, and better estimate of expression.
 
-** The concentrations of cDNA samples vary. What impact does this have?
+*** The concentrations of cDNA samples vary. What impact does this have?
 
  - Increased coverage of all expressed genes ($n$ counts to $cn$ counts).
  - Increased detection of lowly-expressed genes ($0$ counts to $n$ counts).
 
-* Library size and detection of low-expressed genes
+** Library size and detection of low-expressed genes
 
 #+ATTR_LaTeX: width=9cm
 #+begin_src R :file results/lib_size.pdf :exports results :results export graphics 
@@ -56,10 +58,10 @@ plotLibSizeSensitivity(cds)
 #+results[54868f871968399ca9794dc2c820b9af76c572e3]:
 : results/lib_size.pdf
 
-* Gene Length and Differential Expression
+** Gene Length and Differential Expression
 
 #+ATTR_LaTeX: width=9cm                                                                                                             
-#+begin_src R :file results/length_de.pdf :exports results :results export graphics 
+#+begin_src R :file results/length_de.pdf :exports results :results export graphics :tangle test.R
 library(Hmisc)
 
 if (!file.exists("dmelanogaster_gene_lengths.txt")) {
@@ -67,36 +69,57 @@ if (!file.exists("dmelanogaster_gene_lengths.txt")) {
   mart <- useMart('ensembl')
   ensembl <- useDataset("dmelanogaster_gene_ensembl", mart)
 
-  bm.results <- getBM(attributes=c("ensembl_gene_id", "start_position", "end_position"), 
-                filters="ensembl_gene_id", values=rownames(d), mart=ensembl)
-  bm.results$length <- abs(bm.results$start_position - bm.results$end_position)
+  # grab sequences from biomart; note that there are some duplicate
+  # IDs. We sould average the cDNA length for this plot.
+  bm.query <- getSequence(id=rownames(counts(pasillaGenes)), type="flybase_gene_id", seqType="cdna", mart=ensembl)
+  cdna.length <- sapply(bm.query$cdna, nchar)
+
+  # I'll put this here if folks want to use other gene length
+  # calculations; cDNA seems best though.
+  ## tmp.query <- getBM(attributes=c("ensembl_gene_id", "start_position", "end_position", "cds_length"), 
+  ##                      filters="ensembl_gene_id", values=rownames(d), mart=ensembl)
+
+  # Note/warning: this is not a full outer join; it matches flybase
+  # ids to others; it will take THE FIRST MATCH ONLY. This is just for
+  # those of you interested in the comparison of gene length, cds
+  # length, and cdna length. This relationship is strongest with the
+  # former: this is a very curious phenomena.
+  ## x = cbind(bm.query, tmp.results[match(bm.query$flybase_gene_id, tmp.query$ensembl_gene_id), ])
+  
+  bm.results <- with(bm.query, data.frame(gene.id=flybase_gene_id, cdna.length=cdna.length))
   write.table(bm.results, "dmelanogaster_gene_ensembl.txt", quote=FALSE, row.names=FALSE, sep="\t")
 } else {
   bm.results <- read.table("dmelanogaster_gene_ensembl.txt", header=TRUE, sep="\t")
 }
 
+# average across lengths for all gene ID's cDNA's
+cdna.ave.lengths <- aggregate(bm.results$cdna.length, list(gene.id=bm.results$gene.id), mean)
+
 cds <- estimateDispersions(cds)
 res <- nbinomTest(cds, "treated", "untreated")
-res$length <- bm.results$length[match(res$id, bm.results$ensembl_gene_id)]
+res$cdna.length <- cdna.ave.lengths$x[match(res$id, cdna.ave.lengths$gene.id)]
 
-k = Hmisc::cut2(res$length, m=100)
+k <- Hmisc::cut2(res$cdna.length, m=100)
 y <- aggregate(res$padj, list(length=k), function(x) sum(na.exclude(x) <= 0.1)/sum(na.exclude(x)))
+
 breaks <- local({
   tmp <- gsub("\\[\\s*(\\d+),\\s*(\\d+).*", "\\1;;\\2", levels(k))
   sapply(strsplit(tmp, ";;"), function(x) mean(as.numeric(x)))
 })
-plot(breaks, y[, 2], log="x", xlab="gene length (log scale)", 
-  ylab="Percent DE genes", 
-  main=sprintf("Percent DE genes by gene length (bins of equal size)\n Pearson correlation: %.2f", 
-  cor(log10(breaks), y[, 2])), pch=19, cex=0.4)
-f <- lm(formula = y[, 2] ~ log10(breaks))
-abline(f, col="blue")
+
+plot(breaks, y[, 2], log="x", xlab="cDNA length (log scale)",
+            ylab="Percent DE genes",
+     main=sprintf("Percent DE genes by cDNA length (bins of equal size)\n Pearson correlation: %.2f",
+       cor(log10(breaks), y[, 2])), pch=19, cex=0.4)
+# f <- lm(formula = y[, 2] ~ log10(breaks))
+f <- lowess(breaks, y[, 2])
+lines(f, col="red")
 #+end_src
 
 #+results[279a0a8f42361aed75d1dc13da3c7716a9e5d37b]:
 : results/length_de.pdf
 
-* Gene Length Bias
+** Gene Length Bias
 
 Oshlack, et al. 2009 talk about this bias extensively.
 
@@ -106,7 +129,7 @@ Oshlack, et al. 2009 talk about this bias extensively.
   - How can we handle this effect in cross-gene, within-sample
     comparisons? Can we use RNA-seq at all?
 
-* The Variance-Mean Relationship
+** The Variance-Mean Relationship
 
 #+ATTR_LaTeX: width=9cm
 #+begin_src R :file results/mean_var.pdf :exports results :results export graphics 
@@ -123,14 +146,14 @@ plot(rowMeans(d.treated)+1, rowVars(d.treated)+1, xlab="genewise means (log scal
 * The Variance-Mean Relationship (not log scale)
 #+ATTR_LaTeX: width=9cm
 #+begin_src R :file results/mean_var_no_log.pdf :exports results :results export graphics  
-plot(rowMeans(d.treated), rowVars(d.treated), xlab="genewise means (log scale)",                                                
-  ylab="genewise variances (log scale)", pch=19, cex=0.4)
+plot(rowMeans(d.treated), rowVars(d.treated), xlab="genewise means",                                                
+  ylab="genewise variances", pch=19, cex=0.4)
 #+end_src
 
 #+results[9afae63bf386aecc4e39bc7d76187cdd8cb0ab70]:
 : results/mean_var_no_log.pdf
 
-* Why does this matter?
+** Why does this matter?
   
   - We need to model this explicitly (=DESeq=, =edgeR=, etc).
   - This variance is /greater/ than the mean (overdipsersion) in
@@ -141,7 +164,7 @@ plot(rowMeans(d.treated), rowVars(d.treated), xlab="genewise means (log scale)",
     or distance (PCA, sparsePCA, the Lasso, distance-based clustering)
     will be negatively affected by this.  
 
-* Distance-based methods
+** Distance-based methods
 
 $d(x, y) = \sqrt{(x_1 - y_1)^2 + (x_2 - y_2)^2 + \ldots + (x_n - y_n)^2}$
 
@@ -156,7 +179,7 @@ $x_1$.
   - What drives this distance calculation?
   - Is this desirable?
 
-* Variance Stabilizing Transformations
+** Variance Stabilizing Transformations
 
 Note: every scale is log-transformed for comparison to the original
 data!
@@ -178,7 +201,7 @@ par(op)
 #+results[0f823894fdbbc806cd5000f8bd64d5d5ecd1300c]:
 [[file:results/vst.pdf]]
 
-* Gene counts as a proportion of total lane counts
+** Gene counts as a proportion of total lane counts
 #+ATTR_LaTeX: width=9cm
 #+begin_src R :file results/gene_dist.pdf :exports results :results export graphics  
 plotGeneDistribution(cds, TRUE, TRUE)
@@ -187,12 +210,14 @@ plotGeneDistribution(cds, TRUE, TRUE)
 #+results[145442e01786ffdeef1ee6ea7d4106d000840cb0]:
 : results/gene_dist.pdf
 
-* RPKM
+* Normalization
+
+** RPKM
 
 $\frac{\text{reads mapped}}{\text{mapped reads (in millions)} \cdot \text{gene length (in KB)}}$
 
 
-* The RPKM motivation
+** The RPKM motivation
 
 Suppose we have one replicate with counts $q_1$, $q_2$, etc. 
 
@@ -203,7 +228,7 @@ scaling factor approach works.
 RPKM approach assumes that total lane counts accurately estimates
 sample concentration in all cases. Is this true?
 
-* Highly expressed genes
+** Highly expressed genes
 
 It's not. Some genes can dominate lane counts.
 
@@ -216,7 +241,7 @@ counts, would you really want to scale the remaining 29,600 genes'
 counts by a value that's 80% composed of 1.3% of the genes'
 expression?
 
-* Better normalization techniques
+** Better normalization techniques
 
   - Quantile normalization (not a scaling factor technique).
   - DESeq's method (use a more robust scaling factor):
